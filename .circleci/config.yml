@@ -1,0 +1,78 @@
+version: 2.1
+orbs:
+  queue: eddiewebb/queue@1.4.0
+jobs:
+  #  build and test jobs go here
+  deploy-job:
+    docker:
+      - image: circleci/ruby:2.4.2-jessie-node 
+    working_directory: ~/repo
+    steps:
+      - checkout
+      # Queue after clone so stuff works
+      - queue/until_front_of_line:
+          time: '10'
+      - run:
+          name: Bundle Install
+          command: bundle check || bundle install
+      - run:
+          name: Cleanup old releases
+          command: bundle exec cap production deploy:cleanup
+        
+      - run:
+          name: Deploy
+          command: bundle exec cap production deploy
+
+  test:
+      docker:
+      # specify the version you desire here
+      - image: circleci/node:10.14
+      
+      # Specify service dependencies here if necessary
+      # CircleCI maintains a library of pre-built images
+      # documented at https://circleci.com/docs/2.0/circleci-images/
+      # - image: circleci/mongo:3.4.4
+
+      working_directory: ~/repo
+
+      steps:
+          - checkout
+          - run:
+              command: curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
+          - run:
+              command: sudo apt-get install git-lfs --upgrade
+          - run:
+              command: sudo chown -R circleci:circleci /usr/local/bin
+                  
+          - run: |
+              git lfs install --force
+              git lfs pull
+              git submodule init
+              git submodule update --remote --recursive
+
+
+          # Download and cache dependencies
+          - restore_cache:
+              keys:
+              - v2-dependencies-{{ checksum "yarn.lock" }}
+              # fallback to using the latest cache if no exact match is found
+              - v2-dependencies-
+
+          - run: yarn install --frozen-lockfile
+              
+          - run:
+              name: Test
+              command:
+                  yarn test --ci --runInBand        
+
+          - store_test_results:
+              path: test-results
+workflows:
+  version: 2
+  build-deploy:
+    jobs:
+      - deploy-job:
+          filters:
+            branches:
+              only: master
+      - test
